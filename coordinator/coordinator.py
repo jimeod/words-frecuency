@@ -43,16 +43,29 @@ en paralelo, combinando los resultados parciales al final del procesamiento dist
 """.strip()
 
 
+# ──────────────────────────────────────────────
+# Ground Truth: conteo secuencial local
+# Simula el mismo trabajo pesado que hacen los workers (1s por fragmento)
+# pero de forma SECUENCIAL (un fragmento a la vez)
+# ──────────────────────────────────────────────
 def sequential_count(text: str) -> tuple[dict, float]:
+    fragments = split_text(text, NUM_WORKERS)
     t0 = time.time()
-    result = count_words(text)
+    combined = {}
+    for i, frag in enumerate(fragments, 1):
+        print(f"[Coordinador] GT procesando fragmento #{i} secuencialmente...")
+        time.sleep(1)  # mismo trabajo pesado que los workers
+        partial = count_words(frag)
+        for word, count in partial.items():
+            combined[word] = combined.get(word, 0) + count
     elapsed = time.time() - t0
-    return result, elapsed
+    return combined, elapsed
 
 
-
+# ──────────────────────────────────────────────
+# Envío de un fragmento al Ambassador
+# ──────────────────────────────────────────────
 def send_to_ambassador(fragment: str, fragment_id: int) -> dict | None:
-
     print(f"\n[Coordinador]  Enviando fragmento #{fragment_id} "
           f"({len(fragment.split())} palabras) al Ambassador...")
     try:
@@ -64,16 +77,17 @@ def send_to_ambassador(fragment: str, fragment_id: int) -> dict | None:
         if resp.status_code == 200:
             return resp.json()
         else:
-            print(f"[Coordinador]  Ambassador retorno HTTP {resp.status_code}")
+            print(f"[Coordinador]  Ambassador retornó HTTP {resp.status_code}")
             return None
     except Exception as e:
         print(f"[Coordinador]  Error contactando Ambassador: {e}")
         return None
 
 
-
+# ──────────────────────────────────────────────
+# Conteo distribuido: divide → despacha → combina
+# ──────────────────────────────────────────────
 def distributed_count(text: str) -> tuple[dict, float, list[dict]]:
-
     fragments = split_text(text, NUM_WORKERS)
     print(f"\n[Coordinador]  Texto dividido en {len(fragments)} fragmentos:")
     for i, frag in enumerate(fragments, 1):
@@ -99,7 +113,7 @@ def distributed_count(text: str) -> tuple[dict, float, list[dict]]:
                     print(f"[Coordinador]  Fragmento #{frag_id} procesado "
                           f"por {response.get('worker_id', 'desconocido')}")
                 else:
-                    print(f"[Coordinador]   Fragmento #{frag_id} sin resultado valido")
+                    print(f"[Coordinador]  Fragmento #{frag_id} sin resultado válido")
             except Exception as e:
                 print(f"[Coordinador]  Error en fragmento #{frag_id}: {e}")
 
@@ -108,99 +122,105 @@ def distributed_count(text: str) -> tuple[dict, float, list[dict]]:
     return combined, elapsed, worker_responses
 
 
-
-def print_separator(char="═", width=65):
+# ──────────────────────────────────────────────
+# Impresión de resultados
+# ──────────────────────────────────────────────
+def sep(char="═", width=65):
     print(char * width)
 
 
-def print_results(distributed_result: dict, dist_time: float,
-                  sequential_result: dict, seq_time: float,
+def print_results(dist_result: dict, dist_time: float,
+                  seq_result: dict, seq_time: float,
                   worker_responses: list[dict]):
 
-    print_separator()
+    # ── Top palabras ──────────────────────────
+    sep()
     print("  RESULTADO DEL SISTEMA DISTRIBUIDO")
-    print_separator()
-
-
-    sorted_words = sorted(distributed_result.items(), key=lambda x: x[1], reverse=True)
-    print(f"\n  Top 20 palabras más frecuentes (de {len(distributed_result)} unicas):\n")
+    sep()
+    sorted_words = sorted(dist_result.items(), key=lambda x: x[1], reverse=True)
+    print(f"\n  Top 20 palabras más frecuentes (de {len(dist_result)} únicas):\n")
     for rank, (word, count) in enumerate(sorted_words[:20], 1):
         bar = "█" * min(count, 30)
         print(f"  {rank:2}. {word:<20} {count:4}  {bar}")
 
+    # ── Resumen por worker ────────────────────
     print()
-    print_separator()
+    sep()
     print("  RESUMEN POR WORKER")
-    print_separator()
+    sep()
     for resp in worker_responses:
         wid = resp.get("worker_id", "?")
         words_proc = resp.get("words_processed", "?")
         unique = len(resp.get("result", {}))
-        print(f"  {wid}: {words_proc} palabras procesadas | {unique} palabras unicas")
+        print(f"  {wid}: {words_proc} palabras procesadas | {unique} palabras únicas")
 
+    # ── Comparación GT vs Distribuido ─────────
     print()
-    print_separator()
-    print("  COMPARACION DE RENDIMIENTO")
-    print_separator()
-    speedup = seq_time / dist_time if dist_time > 0 else float("inf")
+    sep()
+    print("  COMPARACIÓN: GROUND TRUTH vs DISTRIBUIDO")
+    sep()
+
+    speedup    = seq_time / dist_time if dist_time > 0 else float("inf")
     improvement = ((seq_time - dist_time) / seq_time * 100) if seq_time > 0 else 0
 
-    print(f"\n  Tiempo secuencial  : {seq_time:.4f} segundos")
-    print(f"   Tiempo distribuido : {dist_time:.4f} segundos")
-    print(f"   Speedup           : {speedup:.2f}x")
-    print(f"   Mejora            : {improvement:.1f}%")
+    print(f"\n  GT= {seq_time:.4f} s   (conteo secuencial local)")
+    print(f"  D=  {dist_time:.4f} s   (conteo distribuido via Ambassador)")
+    print(f"\n  Speedup  : {speedup:.2f}x")
+    print(f"  Mejora   : {improvement:.1f}%")
 
-   
-    if set(distributed_result.keys()) == set(sequential_result.keys()):
-        match = all(distributed_result[k] == sequential_result[k]
-                    for k in distributed_result)
-        status = " CONSISTENTE" if match else " DIFERENCIAS DETECTADAS"
+    # Consistencia
+    if set(dist_result.keys()) == set(seq_result.keys()):
+        match = all(dist_result[k] == seq_result[k] for k in dist_result)
+        status = "✔  CONSISTENTE" if match else "✘  DIFERENCIAS DETECTADAS"
     else:
-        status = " VOCABULARIOS DISTINTOS (revisión necesaria)"
-    print(f"\n  Consistencia de resultados: {status}")
+        status = "✘  VOCABULARIOS DISTINTOS (revisión necesaria)"
+
+    print(f"\n  Consistencia GT vs D : {status}")
     print()
-    print_separator()
+    sep()
 
 
-
+# ──────────────────────────────────────────────
+# Main
+# ──────────────────────────────────────────────
 def main():
-    
     if len(sys.argv) > 1:
         text_input = " ".join(sys.argv[1:])
         print(f"[Coordinador] Usando texto desde argumentos ({len(text_input.split())} palabras).")
     else:
         text_input = SAMPLE_TEXT
-        print(f"[Coordinador] Usando texto de prueba ({len(text_input.split())} palabras).")
+        print(f"[Coordinador] Usando SAMPLE_TEXT hardcodeado ({len(text_input.split())} palabras).")
 
-    print_separator("─")
-    print("[Coordinador] INICIANDO CONTEO SECUENCIAL (Ground Truth)...")
-    print_separator("─")
+    # Ground Truth
+    sep("─")
+    print("[Coordinador] INICIANDO CONTEO SECUENCIAL — Ground Truth...")
+    sep("─")
     seq_result, seq_time = sequential_count(text_input)
-    print(f"[Coordinador] Secuencial completado en {seq_time:.4f}s "
-          f"| Palabras unicas: {len(seq_result)}")
+    print(f"[Coordinador] GT completado  →  GT= {seq_time:.4f} s  |  "
+          f"Palabras únicas: {len(seq_result)}")
 
     print()
-    print_separator("─")
-    print("[Coordinador]  INICIANDO CONTEO DISTRIBUIDO...")
-    print_separator("─")
+    sep("─")
+    print("[Coordinador] INICIANDO CONTEO DISTRIBUIDO...")
+    sep("─")
     dist_result, dist_time, worker_responses = distributed_count(text_input)
-    print(f"\n[Coordinador]  Distribuido completado en {dist_time:.4f}s "
-          f"| Palabras unicas: {len(dist_result)}")
+    print(f"\n[Coordinador] Distribuido completado  →  D= {dist_time:.4f} s  |  "
+          f"Palabras únicas: {len(dist_result)}")
 
     print()
     print_results(dist_result, dist_time, seq_result, seq_time, worker_responses)
 
-    # Guardar resultado en JSON
+    # Guardar JSON
     output_path = os.path.join(os.path.dirname(__file__), "..", "resultado_final.json")
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump({
             "distributed_result": dist_result,
-            "sequential_result": seq_result,
-            "distributed_time_s": round(dist_time, 4),
-            "sequential_time_s": round(seq_time, 4),
-            "speedup": round(seq_time / dist_time, 2) if dist_time > 0 else None
+            "sequential_result":  seq_result,
+            "GT_seconds":  round(seq_time, 4),
+            "D_seconds":   round(dist_time, 4),
+            "speedup":     round(seq_time / dist_time, 2) if dist_time > 0 else None
         }, f, ensure_ascii=False, indent=2)
-    print(f"[Coordinador]Resultado guardado en resultado_final.json")
+    print(f"[Coordinador] Resultado guardado en resultado_final.json")
 
 
 if __name__ == "__main__":
