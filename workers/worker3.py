@@ -11,7 +11,7 @@ app = Flask(__name__)
 WORKER_ID = "worker_3"
 PORT = 5003
 
-# Texto hardcodeado — usado al correr este worker directamente
+
 SAMPLE_TEXT = """
 Los sistemas distribuidos son un campo fundamental de la informática moderna.
 Un sistema distribuido consiste en múltiples computadoras que se comunican entre sí
@@ -68,7 +68,7 @@ def process():
     }), 200
 
 
-# ── Modo standalone: procesa SAMPLE_TEXT completo y muestra tiempos ──
+
 def standalone_demo():
     import time as _time
     print(f"[{WORKER_ID}] Modo standalone — procesando SAMPLE_TEXT completo")

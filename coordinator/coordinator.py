@@ -84,9 +84,7 @@ def send_to_ambassador(fragment: str, fragment_id: int) -> dict | None:
         return None
 
 
-# ──────────────────────────────────────────────
-# Conteo distribuido: divide → despacha → combina
-# ──────────────────────────────────────────────
+
 def distributed_count(text: str) -> tuple[dict, float, list[dict]]:
     fragments = split_text(text, NUM_WORKERS)
     print(f"\n[Coordinador]  Texto dividido en {len(fragments)} fragmentos:")
@@ -143,7 +141,6 @@ def print_results(dist_result: dict, dist_time: float,
         bar = "█" * min(count, 30)
         print(f"  {rank:2}. {word:<20} {count:4}  {bar}")
 
-    # ── Resumen por worker ────────────────────
     print()
     sep()
     print("  RESUMEN POR WORKER")
@@ -154,7 +151,7 @@ def print_results(dist_result: dict, dist_time: float,
         unique = len(resp.get("result", {}))
         print(f"  {wid}: {words_proc} palabras procesadas | {unique} palabras únicas")
 
-    # ── Comparación GT vs Distribuido ─────────
+   
     print()
     sep()
     print("  COMPARACIÓN: GROUND TRUTH vs DISTRIBUIDO")
@@ -180,9 +177,7 @@ def print_results(dist_result: dict, dist_time: float,
     sep()
 
 
-# ──────────────────────────────────────────────
-# Main
-# ──────────────────────────────────────────────
+
 def main():
     if len(sys.argv) > 1:
         text_input = " ".join(sys.argv[1:])
@@ -191,7 +186,7 @@ def main():
         text_input = SAMPLE_TEXT
         print(f"[Coordinador] Usando SAMPLE_TEXT hardcodeado ({len(text_input.split())} palabras).")
 
-    # Ground Truth
+    
     sep("─")
     print("[Coordinador] INICIANDO CONTEO SECUENCIAL — Ground Truth...")
     sep("─")

@@ -68,7 +68,7 @@ def process():
     }), 200
 
 
-# ── Modo standalone: procesa SAMPLE_TEXT completo y muestra tiempos ──
+
 def standalone_demo():
     import time as _time
     print(f"[{WORKER_ID}] Modo standalone — procesando SAMPLE_TEXT completo")
