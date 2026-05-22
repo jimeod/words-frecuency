@@ -19,7 +19,7 @@ class CircuitBreaker:
         self._state = CircuitState.CLOSED
         self._fail_count = 0
         self._last_failure_time: float | None = None
-        self._lock = threading.Lock()
+        self._lock = threading.Lock() # evita que varios hilos modifiquen el estado al mismo tiempo
 
 
     @property

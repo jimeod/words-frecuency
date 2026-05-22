@@ -13,48 +13,28 @@ from utils.word_counter import count_words, merge_counts
 AMBASSADOR_URL = "http://127.0.0.1:6000/dispatch"
 NUM_WORKERS = 3
 
-SAMPLE_TEXT = """
-Los sistemas distribuidos son un campo fundamental de la informática moderna.
-Un sistema distribuido consiste en múltiples computadoras que se comunican entre sí
-a través de una red para lograr un objetivo común. Estos sistemas ofrecen ventajas
-significativas como escalabilidad, tolerancia a fallos y mejor rendimiento.
-
-Python es uno de los lenguajes más populares para implementar sistemas distribuidos
-debido a su simplicidad y a la gran cantidad de bibliotecas disponibles. Flask es un
-microframework web de Python que permite crear servicios HTTP de manera sencilla.
-Los servicios HTTP son fundamentales en arquitecturas de microservicios modernos.
-
-El patrón Ambassador actúa como intermediario entre un servicio y sus clientes,
-manejando tareas transversales como timeout, reintentos y logging. El Ambassador
-simplifica la lógica del cliente al centralizar la comunicación con los servicios externos.
-Este patrón es muy útil en arquitecturas de microservicios y sistemas distribuidos.
-
-El patrón Circuit Breaker es esencial para la tolerancia a fallos en sistemas distribuidos.
-Cuando un servicio falla repetidamente, el Circuit Breaker abre el circuito y evita
-enviar más solicitudes al servicio fallido, permitiendo que el sistema se recupere.
-El Circuit Breaker tiene tres estados: CLOSED, OPEN y HALF-OPEN, cada uno con
-un comportamiento específico para manejar fallos y recuperaciones del sistema.
-
-La frecuencia de palabras es una técnica fundamental en el procesamiento de texto
-y análisis de lenguaje natural. Contar palabras de manera distribuida permite
-procesar grandes volúmenes de texto de forma eficiente y escalable en sistemas modernos.
-Los sistemas de conteo distribuido dividen el texto en fragmentos y los procesan
-en paralelo, combinando los resultados parciales al final del procesamiento distribuido.
-""".strip()
+# Ruta por defecto del archivo JSON de entrada (misma carpeta que este script)
+DEFAULT_INPUT_JSON = os.path.join(os.path.dirname(__file__), "input.json")
 
 
-# ──────────────────────────────────────────────
-# Ground Truth: conteo secuencial local
-# Simula el mismo trabajo pesado que hacen los workers (1s por fragmento)
-# pero de forma SECUENCIAL (un fragmento a la vez)
-# ──────────────────────────────────────────────
+def load_input_json(path: str) -> tuple[str, str]:
+    """Lee el archivo JSON de entrada y retorna (title, text)."""
+    with open(path, "r", encoding="utf-8") as f:
+        data = json.load(f)
+    title = data.get("title", "Sin título")
+    text = data.get("text", "").strip()
+    if not text:
+        raise ValueError(f"El archivo '{path}' no contiene el campo 'text' o está vacío.")
+    return title, text
+
+
 def sequential_count(text: str) -> tuple[dict, float]:
     fragments = split_text(text, NUM_WORKERS)
     t0 = time.time()
     combined = {}
     for i, frag in enumerate(fragments, 1):
         print(f"[Coordinador] GT procesando fragmento #{i} secuencialmente...")
-        time.sleep(1)  # mismo trabajo pesado que los workers
+        time.sleep(1)
         partial = count_words(frag)
         for word, count in partial.items():
             combined[word] = combined.get(word, 0) + count
@@ -62,9 +42,6 @@ def sequential_count(text: str) -> tuple[dict, float]:
     return combined, elapsed
 
 
-# ──────────────────────────────────────────────
-# Envío de un fragmento al Ambassador
-# ──────────────────────────────────────────────
 def send_to_ambassador(fragment: str, fragment_id: int) -> dict | None:
     print(f"\n[Coordinador]  Enviando fragmento #{fragment_id} "
           f"({len(fragment.split())} palabras) al Ambassador...")
@@ -82,7 +59,6 @@ def send_to_ambassador(fragment: str, fragment_id: int) -> dict | None:
     except Exception as e:
         print(f"[Coordinador]  Error contactando Ambassador: {e}")
         return None
-
 
 
 def distributed_count(text: str) -> tuple[dict, float, list[dict]]:
@@ -120,9 +96,6 @@ def distributed_count(text: str) -> tuple[dict, float, list[dict]]:
     return combined, elapsed, worker_responses
 
 
-# ──────────────────────────────────────────────
-# Impresión de resultados
-# ──────────────────────────────────────────────
 def sep(char="═", width=65):
     print(char * width)
 
@@ -131,7 +104,6 @@ def print_results(dist_result: dict, dist_time: float,
                   seq_result: dict, seq_time: float,
                   worker_responses: list[dict]):
 
-    # ── Top palabras ──────────────────────────
     sep()
     print("  RESULTADO DEL SISTEMA DISTRIBUIDO")
     sep()
@@ -151,13 +123,12 @@ def print_results(dist_result: dict, dist_time: float,
         unique = len(resp.get("result", {}))
         print(f"  {wid}: {words_proc} palabras procesadas | {unique} palabras únicas")
 
-   
     print()
     sep()
     print("  COMPARACIÓN: GROUND TRUTH vs DISTRIBUIDO")
     sep()
 
-    speedup    = seq_time / dist_time if dist_time > 0 else float("inf")
+    speedup = seq_time / dist_time if dist_time > 0 else float("inf")
     improvement = ((seq_time - dist_time) / seq_time * 100) if seq_time > 0 else 0
 
     print(f"\n  GT= {seq_time:.4f} s   (conteo secuencial local)")
@@ -165,7 +136,6 @@ def print_results(dist_result: dict, dist_time: float,
     print(f"\n  Speedup  : {speedup:.2f}x")
     print(f"  Mejora   : {improvement:.1f}%")
 
-    # Consistencia
     if set(dist_result.keys()) == set(seq_result.keys()):
         match = all(dist_result[k] == seq_result[k] for k in dist_result)
         status = "✔  CONSISTENTE" if match else "✘  DIFERENCIAS DETECTADAS"
@@ -177,16 +147,24 @@ def print_results(dist_result: dict, dist_time: float,
     sep()
 
 
-
 def main():
-    if len(sys.argv) > 1:
-        text_input = " ".join(sys.argv[1:])
-        print(f"[Coordinador] Usando texto desde argumentos ({len(text_input.split())} palabras).")
-    else:
-        text_input = SAMPLE_TEXT
-        print(f"[Coordinador] Usando SAMPLE_TEXT hardcodeado ({len(text_input.split())} palabras).")
+    # Acepta ruta al .json como argumento opcional; si no, usa input.json del mismo directorio
+    json_path = sys.argv[1] if len(sys.argv) > 1 else DEFAULT_INPUT_JSON
 
-    
+    sep("─")
+    print(f"[Coordinador] Leyendo archivo de entrada: {json_path}")
+    try:
+        title, text_input = load_input_json(json_path)
+    except FileNotFoundError:
+        print(f"[Coordinador] ERROR: No se encontró el archivo '{json_path}'.")
+        sys.exit(1)
+    except ValueError as e:
+        print(f"[Coordinador] ERROR: {e}")
+        sys.exit(1)
+
+    print(f"[Coordinador] Título  : {title}")
+    print(f"[Coordinador] Palabras: {len(text_input.split())}")
+
     sep("─")
     print("[Coordinador] INICIANDO CONTEO SECUENCIAL — Ground Truth...")
     sep("─")
@@ -205,15 +183,16 @@ def main():
     print()
     print_results(dist_result, dist_time, seq_result, seq_time, worker_responses)
 
-    # Guardar JSON
+    # Guardar JSON con título incluido
     output_path = os.path.join(os.path.dirname(__file__), "..", "resultado_final.json")
     with open(output_path, "w", encoding="utf-8") as f:
         json.dump({
+            "title":              title,
             "distributed_result": dist_result,
             "sequential_result":  seq_result,
-            "GT_seconds":  round(seq_time, 4),
-            "D_seconds":   round(dist_time, 4),
-            "speedup":     round(seq_time / dist_time, 2) if dist_time > 0 else None
+            "GT_seconds":         round(seq_time, 4),
+            "D_seconds":          round(dist_time, 4),
+            "speedup":            round(seq_time / dist_time, 2) if dist_time > 0 else None
         }, f, ensure_ascii=False, indent=2)
     print(f"[Coordinador] Resultado guardado en resultado_final.json")
 
